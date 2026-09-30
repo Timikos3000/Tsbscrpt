@@ -2,7 +2,6 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
@@ -13,9 +12,9 @@ local LocalPlayer = Players.LocalPlayer
 -- ==========================================
 local Settings = {
     AutoFarm = false,
-    VoidRampage = true,
-    UseTimerG = true,
-    TimerG_Interval = 60,
+    TweenSpeed = 90, -- Studs per second
+    CheckInterval = 0.1, -- 0.1s update interval
+    AttackDistance = 3.5,
     TargetStreaks = true,
     
     -- Hitbox Expander / Reach Settings
@@ -30,10 +29,8 @@ local Settings = {
 local TargetList = {}
 local currentTarget = nil
 local lastTargetScan = 0
-local lastGTime = tick()
 local lastM1Time = tick()
 local lastSkillTime = tick()
-local isExecutingUlt = false
 local isBlocking = false
 
 -- ==========================================
@@ -92,14 +89,11 @@ local function checkAttackingEnemies()
             if enemyHrp and enemyHum then
                 local dist = (myHrp.Position - enemyHrp.Position).Magnitude
                 if dist <= Settings.AutoBlockRange then
-                    -- Check enemy animators for active attack tracks
                     local animator = enemyHum:FindFirstChildOfClass("Animator")
                     if animator then
                         for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
                             if track.IsPlaying and track.WeightCurrent > 0 then
                                 local animName = track.Name:lower()
-                                
-                                -- Filter standard combat animations
                                 if animName:find("attack") or animName:find("punch") or animName:find("swing") or animName:find("m1") or animName:find("skill") or animName:find("dash") then
                                     return true
                                 end
@@ -113,9 +107,8 @@ local function checkAttackingEnemies()
     return false
 end
 
--- Scan for enemy attacks on every frame
 RunService.Heartbeat:Connect(function()
-    if Settings.AutoBlock and not isExecutingUlt then
+    if Settings.AutoBlock then
         if checkAttackingEnemies() then
             toggleBlock(true)
         else
@@ -125,7 +118,7 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ==========================================
--- TSB REACH / HITBOX VISUALIZER
+-- HITBOX EXPANDER / REACH VISUALIZER
 -- ==========================================
 RunService.Heartbeat:Connect(function()
     if Settings.HitboxExpanded then
@@ -174,7 +167,6 @@ local function updateTargetList()
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer and isAlive(p) then
             local streak = 0
-            
             local leaderstats = p:FindFirstChild("leaderstats")
             if leaderstats then
                 local streakVal = leaderstats:FindFirstChild("Streak") or leaderstats:FindFirstChild("Kills")
@@ -183,7 +175,6 @@ local function updateTargetList()
             if p:GetAttribute("Killstreak") then
                 streak = p:GetAttribute("Killstreak")
             end
-
             table.insert(TargetList, { Player = p, Streak = streak })
         end
     end
@@ -207,104 +198,49 @@ local function getNextTarget()
             return p
         end
     end
-
     return nil
-end
-
--- ==========================================
--- VOID RAMPAGE LOGIC
--- ==========================================
-local function executeVoidRampage()
-    if isExecutingUlt then return end
-    isExecutingUlt = true
-    toggleBlock(false)
-
-    task.spawn(function()
-        local char, hrp, hum = getMyChar()
-        if not char or not hrp then 
-            isExecutingUlt = false
-            return 
-        end
-
-        -- Teleport 500 studs up
-        hrp.CFrame = hrp.CFrame * CFrame.new(0, 500, 0)
-        task.wait(0.2)
-
-        Rayfield:Notify({
-            Title = "⚡ VOID RAMPAGE",
-            Content = "Activating ultimate skill at height...",
-            Duration = 3,
-            Image = 4483362458,
-        })
-
-        -- Press G (Activate Ultimate)
-        pressKey(Enum.KeyCode.G, 0.1)
-        task.wait(10.0)
-
-        -- Press Skill 2
-        pressKey(Enum.KeyCode.Two, 0.1)
-        task.wait(0.2)
-
-        Rayfield:Notify({
-            Title = "⚡ VOID RAMPAGE",
-            Content = "Mass teleporting across all players!",
-            Duration = 3,
-            Image = 4483362458,
-        })
-
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p ~= LocalPlayer and isAlive(p) then
-                local targetHrp = p.Character:FindFirstChild("HumanoidRootPart")
-                if targetHrp and hrp then
-                    hrp.CFrame = targetHrp.CFrame * CFrame.new(0, 0, -1)
-                    clickM1()
-                    task.wait(0.1)
-                end
-            end
-        end
-
-        -- Reset position into the void
-        if hrp then
-            hrp.CFrame = CFrame.new(hrp.Position.X, -500, hrp.Position.Z)
-        end
-
-        lastGTime = tick()
-        task.wait(3)
-        currentTarget = nil
-        isExecutingUlt = false
-    end)
 end
 
 -- ==========================================
 -- RAYFIELD UI CREATION
 -- ==========================================
 local Window = Rayfield:CreateWindow({
-   Name = "TSB | AutoFarm Hub",
+   Name = "TSB AutoFarm Hub",
    Icon = 0,
    LoadingTitle = "Loading TSB Script...",
    LoadingSubtitle = "by Assistant",
    Theme = "Default",
-
    ConfigurationSaving = {
       Enabled = true,
       FolderName = "TSB_AutoFarm_Configs",
       FileName = "DefaultConfig"
    },
-
    KeySystem = false
 })
 
-local FarmTab = Window:CreateTab("Auto Farm", 4483362458)
-local CombatTab = Window:CreateTab("Combat", 4483362458)
+local FarmTab = Window:CreateTab("Auto Farm", 0)
+local CombatTab = Window:CreateTab("Combat", 0)
 
 -- AUTOFARM SECTION
-FarmTab:CreateSection("Main Farm")
+FarmTab:CreateSection("Main Farm Settings")
 
 FarmTab:CreateToggle({
-   Name = "Enable Auto Farm",
+   Name = "Enable Tween AutoFarm",
    CurrentValue = Settings.AutoFarm,
    Flag = "AutoFarmToggle",
    Callback = function(Value) Settings.AutoFarm = Value end,
+})
+
+FarmTab:CreateSlider({
+   Name = "Tween Speed (Studs/Sec)",
+   Range = {30, 200},
+   Increment = 5,
+   Suffix = "studs/s",
+   CurrentValue = Settings.TweenSpeed,
+   Flag = "SpeedSlider",
+   Callback = function(Value)
+       Settings.TweenSpeed = Value
+   end,
 })
 
 FarmTab:CreateToggle({
@@ -314,41 +250,6 @@ FarmTab:CreateToggle({
    Callback = function(Value)
        Settings.TargetStreaks = Value
        updateTargetList()
-   end,
-})
-
-FarmTab:CreateSection("Ultimate Settings (Void Rampage)")
-
-FarmTab:CreateToggle({
-   Name = "Void Rampage Reset",
-   CurrentValue = Settings.VoidRampage,
-   Flag = "VoidRampageToggle",
-   Callback = function(Value) Settings.VoidRampage = Value end,
-})
-
-FarmTab:CreateToggle({
-   Name = "Activate G on Timer",
-   CurrentValue = Settings.UseTimerG,
-   Flag = "TimerGToggle",
-   Callback = function(Value) Settings.UseTimerG = Value end,
-})
-
-FarmTab:CreateSlider({
-   Name = "G Activation Cooldown (sec)",
-   Range = {10, 300},
-   Increment = 5,
-   Suffix = "sec",
-   CurrentValue = Settings.TimerG_Interval,
-   Flag = "GTimerSlider",
-   Callback = function(Value)
-       Settings.TimerG_Interval = Value
-   end,
-})
-
-FarmTab:CreateButton({
-   Name = "🔥 Trigger Void Rampage Now",
-   Callback = function()
-       executeVoidRampage()
    end,
 })
 
@@ -403,42 +304,46 @@ CombatTab:CreateSlider({
    end,
 })
 
--- AUTO LOAD CONFIGURATION
 Rayfield:LoadConfiguration()
 
 -- ==========================================
--- MAIN BOT LOOP
+-- MAIN BOT LOOP (TWEEN & FARM)
 -- ==========================================
 task.spawn(function()
     while true do
-        task.wait(0.1)
+        task.wait(Settings.CheckInterval)
 
-        if Settings.AutoFarm and not isExecutingUlt then
+        if Settings.AutoFarm then
             local char, hrp, hum = getMyChar()
 
             if char and hrp and hum and hum.Health > 0 then
+                if not currentTarget or not isAlive(currentTarget) then
+                    currentTarget = getNextTarget()
+                end
 
-                if Settings.VoidRampage and Settings.UseTimerG and (tick() - lastGTime >= Settings.TimerG_Interval) then
-                    executeVoidRampage()
-                else
-                    if not currentTarget or not isAlive(currentTarget) then
-                        currentTarget = getNextTarget()
-                    end
+                if currentTarget and isAlive(currentTarget) then
+                    local targetHrp = currentTarget.Character:FindFirstChild("HumanoidRootPart")
+                    if targetHrp then
+                        local targetPos = targetHrp.Position
+                        local myPos = hrp.Position
+                        local distance = (targetPos - myPos).Magnitude
 
-                    if currentTarget and isAlive(currentTarget) then
-                        local targetHrp = currentTarget.Character:FindFirstChild("HumanoidRootPart")
-                        if targetHrp then
-                            hrp.CFrame = targetHrp.CFrame * CFrame.new(0, 0, 2.3)
+                        -- Smooth Movement at 90 Studs/Sec
+                        if distance > Settings.AttackDistance then
+                            local direction = (targetPos - myPos).Unit
+                            hrp.CFrame = CFrame.new(myPos + (direction * Settings.TweenSpeed * Settings.CheckInterval), Vector3.new(targetPos.X, myPos.Y, targetPos.Z))
+                        else
+                            hrp.CFrame = CFrame.new(myPos, Vector3.new(targetPos.X, myPos.Y, targetPos.Z))
 
-                            -- Perform attacks only when not currently blocking
                             if not isBlocking then
-                                if tick() - lastM1Time >= 0.3 then
+                                if tick() - lastM1Time >= 0.25 then
                                     clickM1()
                                     lastM1Time = tick()
                                 end
 
-                                if tick() - lastSkillTime >= 1.2 then
+                                if tick() - lastSkillTime >= 1.0 then
                                     pressKey(Enum.KeyCode.One, 0.02)
+                                    pressKey(Enum.KeyCode.Two, 0.02)
                                     pressKey(Enum.KeyCode.Three, 0.02)
                                     pressKey(Enum.KeyCode.Four, 0.02)
                                     lastSkillTime = tick()
