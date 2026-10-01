@@ -1,6 +1,7 @@
 -- ==========================================
 -- TSB AUTO-FARM HUB | Developer: JustTim :)
 -- UI: Rayfield (Optimized for Delta Executor)
+-- Mode: SKILLS ONLY (No M1)
 -- ==========================================
 
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
@@ -71,22 +72,7 @@ local function getMyChar()
     return char, hrp, hum
 end
 
--- Delta-Compatible M1 Attack
-local function performM1()
-    local char = LocalPlayer.Character
-    if char then
-        local tool = char:FindFirstChildOfClass("Tool")
-        if tool then
-            tool:Activate()
-        else
-            pcall(function()
-                game:GetService("ReplicatedStorage").Knit.Services.ToolService.RF.Attack:InvokeServer()
-            end)
-        end
-    end
-end
-
--- ПРОСТОЕ ПООЧЕРЕДНОЕ ИСПОЛЬЗОВАНИЕ СКИЛЛОВ 1-4
+-- ПООЧЕРЕДНОЕ ИСПОЛЬЗОВАНИЕ СКИЛЛОВ 1-4
 local function useSkills()
     if not Settings.AutoSkills or (tick() - lastSkillTime < Settings.SkillCooldown) then return end
     
@@ -94,7 +80,6 @@ local function useSkills()
     local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
     if not char or not backpack then return end
 
-    -- Находим все доступные скиллы в рюкзаке
     local tools = {}
     for _, item in ipairs(backpack:GetChildren()) do
         if item:IsA("Tool") then
@@ -102,7 +87,6 @@ local function useSkills()
         end
     end
 
-    -- Прожимаем их по порядку
     if #tools > 0 then
         for _, skillTool in ipairs(tools) do
             skillTool.Parent = char
@@ -485,7 +469,7 @@ task.spawn(function()
                 isInSafeZone = false
             end
 
-            -- Farm Routine
+            -- Farm Routine (Skills Only)
             if Settings.AutoFarm and not isInSafeZone then
                 if not currentTarget or not isAlive(currentTarget) then
                     currentTarget = getNextTarget()
@@ -503,7 +487,6 @@ task.spawn(function()
                             hrp.CFrame = CFrame.new(myPos + (direction * Settings.TweenSpeed * Settings.CheckInterval), Vector3.new(targetPos.X, myPos.Y, targetPos.Z))
                         else
                             hrp.CFrame = CFrame.new(myPos, Vector3.new(targetPos.X, myPos.Y, targetPos.Z))
-                            performM1()
                             useSkills()
                         end
                     end
