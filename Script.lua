@@ -13,10 +13,15 @@ local LocalPlayer = Players.LocalPlayer
 local Settings = {
     AutoFarm = false,
     TweenSpeed = 90, -- Studs per second
-    CheckInterval = 0.1, -- 0.1s update interval
+    CheckInterval = 0.05,
     AttackDistance = 3.5,
     TargetStreaks = true,
     
+    -- Safe Zone / Low HP Escape Settings
+    AutoSafeZone = true,
+    LowHealthThreshold = 30, -- % HP для телепорта
+    SafePlatformPos = Vector3.new(0, 500, 0), -- Позиция платформы в небе
+
     -- Hitbox Expander / Reach Settings
     HitboxExpanded = false,
     HitboxSize = 15,
@@ -32,6 +37,8 @@ local lastTargetScan = 0
 local lastM1Time = tick()
 local lastSkillTime = tick()
 local isBlocking = false
+local isInSafeZone = false
+local safePlatformInstance = nil
 
 -- ==========================================
 -- HELPER FUNCTIONS
@@ -53,11 +60,12 @@ local function getMyChar()
     return char, hrp, hum
 end
 
-local function pressKey(keyCode, holdTime)
-    holdTime = holdTime or 0.05
-    VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-    task.wait(holdTime)
-    VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+local function pressKeyAsync(keyCode)
+    task.spawn(function()
+        VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+        task.wait(0.03)
+        VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+    end)
 end
 
 local function toggleBlock(state)
@@ -68,15 +76,36 @@ end
 
 local function clickM1()
     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-    task.wait(0.04)
+    task.wait(0.02)
     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+end
+
+-- Создание/получение безопасной пластины
+local function getOrCreateSafePlatform()
+    if safePlatformInstance and safePlatformInstance.Parent then
+        return safePlatformInstance
+    end
+
+    local part = Instance.new("Part")
+    part.Name = "TSB_SafePlatform"
+    part.Size = Vector3.new(50, 2, 50)
+    part.Position = Settings.SafePlatformPos
+    part.Anchored = true
+    part.CanCollide = true
+    part.Transparency = 0.5
+    part.Color = Color3.fromRGB(0, 255, 150)
+    part.Material = Enum.Material.ForceField
+    part.Parent = workspace
+
+    safePlatformInstance = part
+    return part
 end
 
 -- ==========================================
 -- AUTO-BLOCK LOGIC
 -- ==========================================
 local function checkAttackingEnemies()
-    if not Settings.AutoBlock then return false end
+    if not Settings.AutoBlock or isInSafeZone then return false end
     local myChar, myHrp = getMyChar()
     if not myHrp then return false end
 
@@ -108,17 +137,13 @@ local function checkAttackingEnemies()
 end
 
 RunService.Heartbeat:Connect(function()
-    if Settings.AutoBlock then
-        if checkAttackingEnemies() then
-            toggleBlock(true)
-        else
-            toggleBlock(false)
-        end
+    if Settings.AutoBlock and not isInSafeZone then
+        toggleBlock(checkAttackingEnemies())
     end
 end)
 
 -- ==========================================
--- HITBOX EXPANDER / REACH VISUALIZER
+-- HITBOX EXPANDER / REACH
 -- ==========================================
 RunService.Heartbeat:Connect(function()
     if Settings.HitboxExpanded then
@@ -126,23 +151,16 @@ RunService.Heartbeat:Connect(function()
         if myHrp then
             for _, p in ipairs(Players:GetPlayers()) do
                 if p ~= LocalPlayer and isAlive(p) then
-                    local targetHrp = p.Character:FindFirstChild("HumanoidRootPart")
+                    local targetHrp = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
                     if targetHrp then
                         local dist = (myHrp.Position - targetHrp.Position).Magnitude
                         if dist <= Settings.HitboxSize then
-                            local highlight = p.Character:FindFirstChild("TSB_Highlight")
-                            if not highlight then
-                                highlight = Instance.new("Highlight")
-                                highlight.Name = "TSB_Highlight"
-                                highlight.FillColor = Color3.fromRGB(255, 0, 0)
-                                highlight.FillTransparency = 0.5
-                                highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-                                highlight.Parent = p.Character
-                            end
+                            targetHrp.Size = Vector3.new(Settings.HitboxSize, Settings.HitboxSize, Settings.HitboxSize)
+                            targetHrp.Transparency = 0.7
+                            targetHrp.CanCollide = false
                         else
-                            if p.Character:FindFirstChild("TSB_Highlight") then
-                                p.Character.TSB_Highlight:Destroy()
-                            end
+                            targetHrp.Size = Vector3.new(2, 2, 1)
+                            targetHrp.Transparency = 1
                         end
                     end
                 end
@@ -153,8 +171,12 @@ end)
 
 local function resetHitboxes()
     for _, p in ipairs(Players:GetPlayers()) do
-        if p.Character and p.Character:FindFirstChild("TSB_Highlight") then
-            p.Character.TSB_Highlight:Destroy()
+        if p.Character then
+            local targetHrp = p.Character:FindFirstChild("HumanoidRootPart")
+            if targetHrp then
+                targetHrp.Size = Vector3.new(2, 2, 1)
+                targetHrp.Transparency = 1
+            end
         end
     end
 end
@@ -187,7 +209,7 @@ local function updateTargetList()
 end
 
 local function getNextTarget()
-    if tick() - lastTargetScan > 60 or #TargetList == 0 then
+    if tick() - lastTargetScan > 15 or #TargetList == 0 then
         updateTargetList()
         lastTargetScan = tick()
     end
@@ -219,6 +241,7 @@ local Window = Rayfield:CreateWindow({
 })
 
 local FarmTab = Window:CreateTab("Auto Farm", 0)
+local DefenseTab = Window:CreateTab("Safety & Defense", 0)
 local CombatTab = Window:CreateTab("Combat", 0)
 
 -- AUTOFARM SECTION
@@ -253,8 +276,43 @@ FarmTab:CreateToggle({
    end,
 })
 
+-- SAFETY & DEFENSE SECTION
+DefenseTab:CreateSection("Safe Zone / Low HP Escape")
+
+DefenseTab:CreateToggle({
+   Name = "Enable Escape to Safe Zone",
+   CurrentValue = Settings.AutoSafeZone,
+   Flag = "SafeZoneToggle",
+   Callback = function(Value)
+       Settings.AutoSafeZone = Value
+   end,
+})
+
+DefenseTab:CreateSlider({
+   Name = "Low HP Escape Threshold (%)",
+   Range = {10, 80},
+   Increment = 5,
+   Suffix = "%",
+   CurrentValue = Settings.LowHealthThreshold,
+   Flag = "LowHPSlider",
+   Callback = function(Value)
+       Settings.LowHealthThreshold = Value
+   end,
+})
+
+DefenseTab:CreateButton({
+   Name = "Manual Teleport to Safe Zone",
+   Callback = function()
+       local char, hrp = getMyChar()
+       if hrp then
+           getOrCreateSafePlatform()
+           hrp.CFrame = CFrame.new(Settings.SafePlatformPos + Vector3.new(0, 4, 0))
+       end
+   end,
+})
+
 -- COMBAT SECTION
-CombatTab:CreateSection("Defense")
+CombatTab:CreateSection("Auto-Block")
 
 CombatTab:CreateToggle({
    Name = "Enable Auto-Block",
@@ -307,16 +365,32 @@ CombatTab:CreateSlider({
 Rayfield:LoadConfiguration()
 
 -- ==========================================
--- MAIN BOT LOOP (TWEEN & FARM)
+-- MAIN BOT LOOP (TWEEN, FARM & SAFE ESCAPE)
 -- ==========================================
 task.spawn(function()
     while true do
         task.wait(Settings.CheckInterval)
 
-        if Settings.AutoFarm then
-            local char, hrp, hum = getMyChar()
+        local char, hrp, hum = getMyChar()
 
-            if char and hrp and hum and hum.Health > 0 then
+        if char and hrp and hum and hum.Health > 0 then
+            local hpPercent = (hum.Health / hum.MaxHealth) * 100
+
+            -- ПРОВЕРКА LOW HP И ПОБЕГ
+            if Settings.AutoSafeZone and hpPercent <= Settings.LowHealthThreshold then
+                if not isInSafeZone then
+                    isInSafeZone = true
+                    getOrCreateSafePlatform()
+                    -- Телепортируем персонажа на безопасную пластину в небе
+                    hrp.CFrame = CFrame.new(Settings.SafePlatformPos + Vector3.new(0, 4, 0))
+                end
+            elseif isInSafeZone and hpPercent >= (Settings.LowHealthThreshold + 20) then
+                -- Восстановили здоровье — возвращаемся в бой
+                isInSafeZone = false
+            end
+
+            -- ОСНОВНОЙ АВТО-ФАРМ (работает только если НЕ на безопасной платформе)
+            if Settings.AutoFarm and not isInSafeZone then
                 if not currentTarget or not isAlive(currentTarget) then
                     currentTarget = getNextTarget()
                 end
@@ -328,7 +402,6 @@ task.spawn(function()
                         local myPos = hrp.Position
                         local distance = (targetPos - myPos).Magnitude
 
-                        -- Smooth Movement at 90 Studs/Sec
                         if distance > Settings.AttackDistance then
                             local direction = (targetPos - myPos).Unit
                             hrp.CFrame = CFrame.new(myPos + (direction * Settings.TweenSpeed * Settings.CheckInterval), Vector3.new(targetPos.X, myPos.Y, targetPos.Z))
@@ -342,10 +415,10 @@ task.spawn(function()
                                 end
 
                                 if tick() - lastSkillTime >= 1.0 then
-                                    pressKey(Enum.KeyCode.One, 0.02)
-                                    pressKey(Enum.KeyCode.Two, 0.02)
-                                    pressKey(Enum.KeyCode.Three, 0.02)
-                                    pressKey(Enum.KeyCode.Four, 0.02)
+                                    pressKeyAsync(Enum.KeyCode.One)
+                                    pressKeyAsync(Enum.KeyCode.Two)
+                                    pressKeyAsync(Enum.KeyCode.Three)
+                                    pressKeyAsync(Enum.KeyCode.Four)
                                     lastSkillTime = tick()
                                 end
                             end
