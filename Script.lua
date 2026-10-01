@@ -27,8 +27,10 @@ local Settings = {
     LowHealthThreshold = 30,
     SafePlatformPos = Vector3.new(0, 600, 0),
 
-    -- Auto Awakening (G)
+    -- Auto Skills & Awakening (G)
     AutoAwakening = true,
+    AutoSkills = true,
+    SkillCooldown = 1.2,
 
     -- Anti-Fling & Fast Recovery
     AntiFling = true,
@@ -44,6 +46,7 @@ local Settings = {
 local TargetList = {}
 local currentTarget = nil
 local lastTargetScan = 0
+local lastSkillTime = tick()
 local isInSafeZone = false
 local safePlatformInstance = nil
 local espHolders = {}
@@ -68,7 +71,7 @@ local function getMyChar()
     return char, hrp, hum
 end
 
--- Delta-Compatible M1 Execution
+-- Delta-Compatible M1 Attack
 local function performM1()
     local char = LocalPlayer.Character
     if char then
@@ -81,6 +84,42 @@ local function performM1()
             end)
         end
     end
+end
+
+-- Delta-Compatible Skills (1, 2, 3, 4)
+local function useSkills()
+    if not Settings.AutoSkills or (tick() - lastSkillTime < Settings.SkillCooldown) then return end
+    
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    -- Вариант 1: Через экипировку инструментов из Backpack (Скиллы 1-4 в TSB)
+    local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if backpack then
+        local tools = backpack:GetChildren()
+        for _, tool in ipairs(tools) do
+            if tool:IsA("Tool") then
+                tool.Parent = char
+                task.wait(0.02)
+                tool:Activate()
+                task.wait(0.02)
+                lastSkillTime = tick()
+                return
+            end
+        end
+    end
+
+    -- Вариант 2: Прямой триггер через ReplicatedStorage (если скиллы не инструменты)
+    pcall(function()
+        local knit = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
+        if knit then
+            local skillService = knit.Services:FindFirstChild("ToolService") or knit.Services:FindFirstChild("ClassService")
+            if skillService and skillService:FindFirstChild("RF") then
+                skillService.RF.UseSkill:InvokeServer()
+                lastSkillTime = tick()
+            end
+        end
+    end)
 end
 
 local function getOrCreateSafePlatform()
@@ -128,12 +167,11 @@ LocalPlayer.Idled:Connect(function()
 end)
 
 -- ==========================================
--- ANTI-FLING & FAST RECOVERY LOGIC
+-- ANTI-FLING & FAST RECOVERY
 -- ==========================================
 RunService.Stepped:Connect(function()
     local myChar, myHrp, myHum = getMyChar()
 
-    -- Anti-Fling
     if Settings.AntiFling and myChar then
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= LocalPlayer and p.Character then
@@ -146,7 +184,6 @@ RunService.Stepped:Connect(function()
         end
     end
 
-    -- Fast Recovery (Быстрый подъем из регдолла)
     if Settings.FastRecovery and myHum then
         local state = myHum:GetState()
         if state == Enum.HumanoidStateType.Ragdoll or state == Enum.HumanoidStateType.FallingDown then
@@ -381,6 +418,13 @@ DefenseTab:CreateButton({
 CombatTab:CreateSection("Combat Enhancements")
 
 CombatTab:CreateToggle({
+   Name = "Auto Use Skills (1-4)",
+   CurrentValue = Settings.AutoSkills,
+   Flag = "AutoSkillsToggle",
+   Callback = function(Value) Settings.AutoSkills = Value end,
+})
+
+CombatTab:CreateToggle({
    Name = "Auto Awakening (G)",
    CurrentValue = Settings.AutoAwakening,
    Flag = "AutoAwakeToggle",
@@ -468,6 +512,7 @@ task.spawn(function()
                         else
                             hrp.CFrame = CFrame.new(myPos, Vector3.new(targetPos.X, myPos.Y, targetPos.Z))
                             performM1()
+                            useSkills()
                         end
                     end
                 end
