@@ -230,7 +230,7 @@ local Window = Rayfield:CreateWindow({
    Name = "TSB AutoFarm Hub",
    Icon = 0,
    LoadingTitle = "Loading TSB Script...",
-   LoadingSubtitle = "by Assistant",
+   LoadingSubtitle = "by JustTim :)",
    Theme = "Default",
    ConfigurationSaving = {
       Enabled = true,
@@ -243,6 +243,10 @@ local Window = Rayfield:CreateWindow({
 local FarmTab = Window:CreateTab("Auto Farm", 0)
 local DefenseTab = Window:CreateTab("Safety & Defense", 0)
 local CombatTab = Window:CreateTab("Combat", 0)
+
+-- CREDITS SECTION
+FarmTab:CreateSection("Script Info")
+FarmTab:CreateLabel("Developer: JustTim :)")
 
 -- AUTOFARM SECTION
 FarmTab:CreateSection("Main Farm Settings")
