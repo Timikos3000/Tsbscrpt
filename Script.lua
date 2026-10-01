@@ -30,7 +30,7 @@ local Settings = {
     -- Auto Skills & Awakening (G)
     AutoAwakening = true,
     AutoSkills = true,
-    SkillCooldown = 1.2,
+    SkillCooldown = 0.5,
 
     -- Anti-Fling & Fast Recovery
     AntiFling = true,
@@ -86,40 +86,32 @@ local function performM1()
     end
 end
 
--- Delta-Compatible Skills (1, 2, 3, 4)
+-- ПРОСТОЕ ПООЧЕРЕДНОЕ ИСПОЛЬЗОВАНИЕ СКИЛЛОВ 1-4
 local function useSkills()
     if not Settings.AutoSkills or (tick() - lastSkillTime < Settings.SkillCooldown) then return end
     
     local char = LocalPlayer.Character
-    if not char then return end
-
-    -- Вариант 1: Через экипировку инструментов из Backpack (Скиллы 1-4 в TSB)
     local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
-    if backpack then
-        local tools = backpack:GetChildren()
-        for _, tool in ipairs(tools) do
-            if tool:IsA("Tool") then
-                tool.Parent = char
-                task.wait(0.02)
-                tool:Activate()
-                task.wait(0.02)
-                lastSkillTime = tick()
-                return
-            end
+    if not char or not backpack then return end
+
+    -- Находим все доступные скиллы в рюкзаке
+    local tools = {}
+    for _, item in ipairs(backpack:GetChildren()) do
+        if item:IsA("Tool") then
+            table.insert(tools, item)
         end
     end
 
-    -- Вариант 2: Прямой триггер через ReplicatedStorage (если скиллы не инструменты)
-    pcall(function()
-        local knit = game:GetService("ReplicatedStorage"):FindFirstChild("Knit")
-        if knit then
-            local skillService = knit.Services:FindFirstChild("ToolService") or knit.Services:FindFirstChild("ClassService")
-            if skillService and skillService:FindFirstChild("RF") then
-                skillService.RF.UseSkill:InvokeServer()
-                lastSkillTime = tick()
-            end
+    -- Прожимаем их по порядку
+    if #tools > 0 then
+        for _, skillTool in ipairs(tools) do
+            skillTool.Parent = char
+            task.wait(0.03)
+            skillTool:Activate()
+            task.wait(0.03)
         end
-    end)
+        lastSkillTime = tick()
+    end
 end
 
 local function getOrCreateSafePlatform()
