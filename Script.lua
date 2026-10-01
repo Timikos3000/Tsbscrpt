@@ -1,9 +1,12 @@
--- Load Rayfield UI
+-- ==========================================
+-- TSB AUTO-FARM HUB | Developer: JustTim :)
+-- UI: Rayfield (Optimized for Delta Executor)
+-- ==========================================
+
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
 local TeleportService = game:GetService("TeleportService")
 local VirtualUser = game:GetService("VirtualUser")
 
@@ -22,11 +25,7 @@ local Settings = {
     -- Safe Zone / Low HP Escape
     AutoSafeZone = true,
     LowHealthThreshold = 30,
-    SafePlatformPos = Vector3.new(0, 500, 0),
-
-    -- Auto-Block
-    AutoBlock = false,
-    AutoBlockRange = 20,
+    SafePlatformPos = Vector3.new(0, 600, 0),
 
     -- Auto Awakening (G)
     AutoAwakening = true,
@@ -35,24 +34,16 @@ local Settings = {
     AntiFling = true,
     FastRecovery = true,
 
-    -- Smart Combo
-    SmartCombo = true,
-
     -- ESP Visuals
     ESPEnabled = false,
 
-    -- Server Utilities
-    AntiAFK = true,
-    AutoServerHopOnLowPlayers = false,
-    MinPlayersForHop = 3
+    -- Anti-AFK
+    AntiAFK = true
 }
 
 local TargetList = {}
 local currentTarget = nil
 local lastTargetScan = 0
-local lastM1Time = tick()
-local lastSkillTime = tick()
-local isBlocking = false
 local isInSafeZone = false
 local safePlatformInstance = nil
 local espHolders = {}
@@ -77,24 +68,19 @@ local function getMyChar()
     return char, hrp, hum
 end
 
-local function pressKeyAsync(keyCode)
-    task.spawn(function()
-        VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-        task.wait(0.03)
-        VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
-    end)
-end
-
-local function toggleBlock(state)
-    if isBlocking == state then return end
-    isBlocking = state
-    VirtualInputManager:SendKeyEvent(state, Enum.KeyCode.F, false, game)
-end
-
-local function clickM1()
-    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-    task.wait(0.02)
-    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+-- Delta-Compatible M1 Execution
+local function performM1()
+    local char = LocalPlayer.Character
+    if char then
+        local tool = char:FindFirstChildOfClass("Tool")
+        if tool then
+            tool:Activate()
+        else
+            pcall(function()
+                game:GetService("ReplicatedStorage").Knit.Services.ToolService.RF.Attack:InvokeServer()
+            end)
+        end
+    end
 end
 
 local function getOrCreateSafePlatform()
@@ -103,8 +89,8 @@ local function getOrCreateSafePlatform()
     end
 
     local part = Instance.new("Part")
-    part.Name = "TSB_SafePlatform"
-    part.Size = Vector3.new(50, 2, 50)
+    part.Name = "TSB_SafePlatform_Delta"
+    part.Size = Vector3.new(60, 2, 60)
     part.Position = Settings.SafePlatformPos
     part.Anchored = true
     part.CanCollide = true
@@ -118,25 +104,20 @@ local function getOrCreateSafePlatform()
 end
 
 local function serverHop()
-    local servers = {}
     local req = game:HttpGet('https://games.roblox.com/v1/games/' .. game.PlaceId .. '/servers/Public?sortOrder=Asc&limit=100')
     local body = game:GetService("HttpService"):JSONDecode(req)
     if body and body.data then
         for _, v in ipairs(body.data) do
-            if type(v) == "table" and v.playing < v.maxPlayers and v.id ~= game.JobId then
-                table.insert(servers, v.id)
+            if v.playing < v.maxPlayers and v.id ~= game.JobId then
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, v.id, LocalPlayer)
+                break
             end
         end
-    end
-    if #servers > 0 then
-        TeleportService:TeleportToPlaceInstance(game.PlaceId, servers[math.random(1, #servers)], LocalPlayer)
-    else
-        Rayfield:Notify({Title = "Server Hop", Content = "Подходящий сервер не найден", Duration = 3})
     end
 end
 
 -- ==========================================
--- ANTI-AFK LOGIC
+-- ANTI-AFK
 -- ==========================================
 LocalPlayer.Idled:Connect(function()
     if Settings.AntiAFK then
@@ -175,7 +156,7 @@ RunService.Stepped:Connect(function()
 end)
 
 -- ==========================================
--- AUTO AWAKENING (G) LOGIC
+-- AUTO AWAKENING (G)
 -- ==========================================
 task.spawn(function()
     while true do
@@ -183,57 +164,14 @@ task.spawn(function()
         if Settings.AutoAwakening and not isInSafeZone then
             local myChar = LocalPlayer.Character
             if myChar then
-                local ultimateBar = LocalPlayer:FindFirstChild("PlayerGui") 
-                    and LocalPlayer.PlayerGui:FindFirstChild("ScreenGui") 
-                    and LocalPlayer.PlayerGui.ScreenGui:FindFirstChild("MagicHealth")
-                
                 local isFull = myChar:GetAttribute("Ultimate") == 100 or myChar:GetAttribute("Awakening") == true
                 if isFull then
-                    pressKeyAsync(Enum.KeyCode.G)
+                    pcall(function()
+                        game:GetService("ReplicatedStorage").Knit.Services.ClassService.RF.Awaken:InvokeServer()
+                    end)
                 end
             end
         end
-    end
-end)
-
--- ==========================================
--- AUTO-BLOCK LOGIC
--- ==========================================
-local function checkAttackingEnemies()
-    if not Settings.AutoBlock or isInSafeZone then return false end
-    local myChar, myHrp = getMyChar()
-    if not myHrp then return false end
-
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and isAlive(p) then
-            local enemyChar = p.Character
-            local enemyHrp = enemyChar:FindFirstChild("HumanoidRootPart")
-            local enemyHum = enemyChar:FindFirstChildOfClass("Humanoid")
-
-            if enemyHrp and enemyHum then
-                local dist = (myHrp.Position - enemyHrp.Position).Magnitude
-                if dist <= Settings.AutoBlockRange then
-                    local animator = enemyHum:FindFirstChildOfClass("Animator")
-                    if animator then
-                        for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                            if track.IsPlaying and track.WeightCurrent > 0 then
-                                local animName = track.Name:lower()
-                                if animName:find("attack") or animName:find("punch") or animName:find("swing") or animName:find("m1") or animName:find("skill") or animName:find("dash") then
-                                    return true
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return false
-end
-
-RunService.Heartbeat:Connect(function()
-    if Settings.AutoBlock and not isInSafeZone then
-        toggleBlock(checkAttackingEnemies())
     end
 end)
 
@@ -272,9 +210,7 @@ end
 
 RunService.RenderStepped:Connect(function()
     if not Settings.ESPEnabled then
-        for p, data in pairs(espHolders) do
-            removeESP(p)
-        end
+        for p, _ in pairs(espHolders) do removeESP(p) end
         return
     end
 
@@ -352,9 +288,7 @@ local function getNextTarget()
 
     for _, data in ipairs(TargetList) do
         local p = data.Player
-        if isAlive(p) then
-            return p
-        end
+        if isAlive(p) then return p end
     end
     return nil
 end
@@ -368,17 +302,13 @@ local Window = Rayfield:CreateWindow({
    LoadingTitle = "Loading TSB Script...",
    LoadingSubtitle = "by JustTim :)",
    Theme = "Default",
-   ConfigurationSaving = {
-      Enabled = true,
-      FolderName = "TSB_AutoFarm_Configs",
-      FileName = "DefaultConfig"
-   },
+   ConfigurationSaving = { Enabled = false },
    KeySystem = false
 })
 
 local FarmTab = Window:CreateTab("Auto Farm", 0)
+local DefenseTab = Window:CreateTab("Safety & Defense", 0)
 local CombatTab = Window:CreateTab("Combat", 0)
-local DefenseTab = Window:CreateTab("Defense", 0)
 local VisualsTab = Window:CreateTab("Visuals", 0)
 local ServerTab = Window:CreateTab("Server", 0)
 
@@ -403,9 +333,7 @@ FarmTab:CreateSlider({
    Suffix = "studs/s",
    CurrentValue = Settings.TweenSpeed,
    Flag = "SpeedSlider",
-   Callback = function(Value)
-       Settings.TweenSpeed = Value
-   end,
+   Callback = function(Value) Settings.TweenSpeed = Value end,
 })
 
 FarmTab:CreateToggle({
@@ -418,60 +346,7 @@ FarmTab:CreateToggle({
    end,
 })
 
--- COMBAT SECTION
-CombatTab:CreateSection("Skills & Ultimate")
-
-CombatTab:CreateToggle({
-   Name = "Auto Awakening (G)",
-   CurrentValue = Settings.AutoAwakening,
-   Flag = "AutoAwakeToggle",
-   Callback = function(Value) Settings.AutoAwakening = Value end,
-})
-
-CombatTab:CreateToggle({
-   Name = "Smart Combo Execution",
-   CurrentValue = Settings.SmartCombo,
-   Flag = "SmartComboToggle",
-   Callback = function(Value) Settings.SmartCombo = Value end,
-})
-
-CombatTab:CreateSection("Defense & Movement")
-
-CombatTab:CreateToggle({
-   Name = "Enable Auto-Block",
-   CurrentValue = Settings.AutoBlock,
-   Flag = "AutoBlockToggle",
-   Callback = function(Value)
-       Settings.AutoBlock = Value
-       if not Value then toggleBlock(false) end
-   end,
-})
-
-CombatTab:CreateSlider({
-   Name = "Auto-Block Distance (Studs)",
-   Range = {5, 40},
-   Increment = 1,
-   Suffix = "studs",
-   CurrentValue = Settings.AutoBlockRange,
-   Flag = "AutoBlockRangeSlider",
-   Callback = function(Value) Settings.AutoBlockRange = Value end,
-})
-
-CombatTab:CreateToggle({
-   Name = "Anti-Fling",
-   CurrentValue = Settings.AntiFling,
-   Flag = "AntiFlingToggle",
-   Callback = function(Value) Settings.AntiFling = Value end,
-})
-
-CombatTab:CreateToggle({
-   Name = "Fast Get-Up (Ragdoll Recovery)",
-   CurrentValue = Settings.FastRecovery,
-   Flag = "FastRecoveryToggle",
-   Callback = function(Value) Settings.FastRecovery = Value end,
-})
-
--- DEFENSE TAB
+-- SAFETY & DEFENSE
 DefenseTab:CreateSection("Safe Zone / Low HP Escape")
 
 DefenseTab:CreateToggle({
@@ -502,8 +377,32 @@ DefenseTab:CreateButton({
    end,
 })
 
--- VISUALS TAB
-VisualsTab:CreateSection("ESP Visuals")
+-- COMBAT
+CombatTab:CreateSection("Combat Enhancements")
+
+CombatTab:CreateToggle({
+   Name = "Auto Awakening (G)",
+   CurrentValue = Settings.AutoAwakening,
+   Flag = "AutoAwakeToggle",
+   Callback = function(Value) Settings.AutoAwakening = Value end,
+})
+
+CombatTab:CreateToggle({
+   Name = "Anti-Fling",
+   CurrentValue = Settings.AntiFling,
+   Flag = "AntiFlingToggle",
+   Callback = function(Value) Settings.AntiFling = Value end,
+})
+
+CombatTab:CreateToggle({
+   Name = "Fast Get-Up (Ragdoll Recovery)",
+   CurrentValue = Settings.FastRecovery,
+   Flag = "FastRecoveryToggle",
+   Callback = function(Value) Settings.FastRecovery = Value end,
+})
+
+-- VISUALS
+VisualsTab:CreateSection("ESP Options")
 
 VisualsTab:CreateToggle({
    Name = "Enable Player ESP",
@@ -512,8 +411,8 @@ VisualsTab:CreateToggle({
    Callback = function(Value) Settings.ESPEnabled = Value end,
 })
 
--- SERVER TAB
-ServerTab:CreateSection("Server Management")
+-- SERVER
+ServerTab:CreateSection("Utilities")
 
 ServerTab:CreateToggle({
    Name = "Anti-AFK Protection",
@@ -527,14 +426,10 @@ ServerTab:CreateButton({
    Callback = function() serverHop() end,
 })
 
-Rayfield:LoadConfiguration()
-
 -- ==========================================
--- MAIN BOT LOOP (TWEEN, FARM & SAFE ESCAPE)
+-- MAIN BOT LOOP
 -- ==========================================
 task.spawn(function()
-    local comboStep = 1
-
     while true do
         task.wait(Settings.CheckInterval)
 
@@ -543,7 +438,7 @@ task.spawn(function()
         if char and hrp and hum and hum.Health > 0 then
             local hpPercent = (hum.Health / hum.MaxHealth) * 100
 
-            -- ПРОВЕРКА LOW HP И ПОБЕГ
+            -- Safe Zone Check
             if Settings.AutoSafeZone and hpPercent <= Settings.LowHealthThreshold then
                 if not isInSafeZone then
                     isInSafeZone = true
@@ -554,7 +449,7 @@ task.spawn(function()
                 isInSafeZone = false
             end
 
-            -- ОСНОВНОЙ АВТО-ФАРМ
+            -- Farm Routine
             if Settings.AutoFarm and not isInSafeZone then
                 if not currentTarget or not isAlive(currentTarget) then
                     currentTarget = getNextTarget()
@@ -572,34 +467,11 @@ task.spawn(function()
                             hrp.CFrame = CFrame.new(myPos + (direction * Settings.TweenSpeed * Settings.CheckInterval), Vector3.new(targetPos.X, myPos.Y, targetPos.Z))
                         else
                             hrp.CFrame = CFrame.new(myPos, Vector3.new(targetPos.X, myPos.Y, targetPos.Z))
-
-                            if not isBlocking then
-                                if Settings.SmartCombo then
-                                    -- Умное комбинирование M1 и скиллов
-                                    if tick() - lastM1Time >= 0.22 then
-                                        clickM1()
-                                        lastM1Time = tick()
-                                        comboStep = comboStep + 1
-                                    end
-
-                                    if comboStep >= 4 and tick() - lastSkillTime >= 0.8 then
-                                        pressKeyAsync(Enum.KeyCode.One)
-                                        pressKeyAsync(Enum.KeyCode.Two)
-                                        pressKeyAsync(Enum.KeyCode.Three)
-                                        pressKeyAsync(Enum.KeyCode.Four)
-                                        lastSkillTime = tick()
-                                        comboStep = 1
-                                    end
-                                else
-                                    -- Обычный спам
-                                    if tick() - lastM1Time >= 0.25 then
-                                        clickM1()
-                                        lastM1Time = tick()
-                                    end
-
-                                    if tick() - lastSkillTime >= 1.0 then
-                                        pressKeyAsync(Enum.KeyCode.One)
-                                        pressKeyAsync(Enum.KeyCode.Two)
-                                        pressKeyAsync(Enum.KeyCode.Three)
-                                        pressKeyAsync(Enum.KeyCode.Four)
-                 
+                            performM1()
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
