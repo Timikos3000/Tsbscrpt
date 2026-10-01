@@ -4,6 +4,8 @@ local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local TeleportService = game:GetService("TeleportService")
+local VirtualUser = game:GetService("VirtualUser")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -12,23 +14,37 @@ local LocalPlayer = Players.LocalPlayer
 -- ==========================================
 local Settings = {
     AutoFarm = false,
-    TweenSpeed = 90, -- Studs per second
+    TweenSpeed = 90,
     CheckInterval = 0.05,
     AttackDistance = 3.5,
     TargetStreaks = true,
     
-    -- Safe Zone / Low HP Escape Settings
+    -- Safe Zone / Low HP Escape
     AutoSafeZone = true,
-    LowHealthThreshold = 30, -- % HP для телепорта
-    SafePlatformPos = Vector3.new(0, 500, 0), -- Позиция платформы в небе
+    LowHealthThreshold = 30,
+    SafePlatformPos = Vector3.new(0, 500, 0),
 
-    -- Hitbox Expander / Reach Settings
-    HitboxExpanded = false,
-    HitboxSize = 15,
-
-    -- Auto-Block Settings
+    -- Auto-Block
     AutoBlock = false,
-    AutoBlockRange = 20
+    AutoBlockRange = 20,
+
+    -- Auto Awakening (G)
+    AutoAwakening = true,
+
+    -- Anti-Fling & Fast Recovery
+    AntiFling = true,
+    FastRecovery = true,
+
+    -- Smart Combo
+    SmartCombo = true,
+
+    -- ESP Visuals
+    ESPEnabled = false,
+
+    -- Server Utilities
+    AntiAFK = true,
+    AutoServerHopOnLowPlayers = false,
+    MinPlayersForHop = 3
 }
 
 local TargetList = {}
@@ -39,6 +55,7 @@ local lastSkillTime = tick()
 local isBlocking = false
 local isInSafeZone = false
 local safePlatformInstance = nil
+local espHolders = {}
 
 -- ==========================================
 -- HELPER FUNCTIONS
@@ -80,7 +97,6 @@ local function clickM1()
     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
 end
 
--- Создание/получение безопасной пластины
 local function getOrCreateSafePlatform()
     if safePlatformInstance and safePlatformInstance.Parent then
         return safePlatformInstance
@@ -100,6 +116,85 @@ local function getOrCreateSafePlatform()
     safePlatformInstance = part
     return part
 end
+
+local function serverHop()
+    local servers = {}
+    local req = game:HttpGet('https://games.roblox.com/v1/games/' .. game.PlaceId .. '/servers/Public?sortOrder=Asc&limit=100')
+    local body = game:GetService("HttpService"):JSONDecode(req)
+    if body and body.data then
+        for _, v in ipairs(body.data) do
+            if type(v) == "table" and v.playing < v.maxPlayers and v.id ~= game.JobId then
+                table.insert(servers, v.id)
+            end
+        end
+    end
+    if #servers > 0 then
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, servers[math.random(1, #servers)], LocalPlayer)
+    else
+        Rayfield:Notify({Title = "Server Hop", Content = "Подходящий сервер не найден", Duration = 3})
+    end
+end
+
+-- ==========================================
+-- ANTI-AFK LOGIC
+-- ==========================================
+LocalPlayer.Idled:Connect(function()
+    if Settings.AntiAFK then
+        VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+        task.wait(1)
+        VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+    end
+end)
+
+-- ==========================================
+-- ANTI-FLING & FAST RECOVERY LOGIC
+-- ==========================================
+RunService.Stepped:Connect(function()
+    local myChar, myHrp, myHum = getMyChar()
+
+    -- Anti-Fling
+    if Settings.AntiFling and myChar then
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and p.Character then
+                for _, part in ipairs(p.Character:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        part.CanCollide = false
+                    end
+                end
+            end
+        end
+    end
+
+    -- Fast Recovery (Быстрый подъем из регдолла)
+    if Settings.FastRecovery and myHum then
+        local state = myHum:GetState()
+        if state == Enum.HumanoidStateType.Ragdoll or state == Enum.HumanoidStateType.FallingDown then
+            myHum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end
+end)
+
+-- ==========================================
+-- AUTO AWAKENING (G) LOGIC
+-- ==========================================
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if Settings.AutoAwakening and not isInSafeZone then
+            local myChar = LocalPlayer.Character
+            if myChar then
+                local ultimateBar = LocalPlayer:FindFirstChild("PlayerGui") 
+                    and LocalPlayer.PlayerGui:FindFirstChild("ScreenGui") 
+                    and LocalPlayer.PlayerGui.ScreenGui:FindFirstChild("MagicHealth")
+                
+                local isFull = myChar:GetAttribute("Ultimate") == 100 or myChar:GetAttribute("Awakening") == true
+                if isFull then
+                    pressKeyAsync(Enum.KeyCode.G)
+                end
+            end
+        end
+    end
+end)
 
 -- ==========================================
 -- AUTO-BLOCK LOGIC
@@ -143,43 +238,84 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- ==========================================
--- HITBOX EXPANDER / REACH
+-- ESP LOGIC
 -- ==========================================
-RunService.Heartbeat:Connect(function()
-    if Settings.HitboxExpanded then
-        local myChar, myHrp = getMyChar()
-        if myHrp then
-            for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= LocalPlayer and isAlive(p) then
-                    local targetHrp = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-                    if targetHrp then
-                        local dist = (myHrp.Position - targetHrp.Position).Magnitude
-                        if dist <= Settings.HitboxSize then
-                            targetHrp.Size = Vector3.new(Settings.HitboxSize, Settings.HitboxSize, Settings.HitboxSize)
-                            targetHrp.Transparency = 0.7
-                            targetHrp.CanCollide = false
-                        else
-                            targetHrp.Size = Vector3.new(2, 2, 1)
-                            targetHrp.Transparency = 1
-                        end
+local function createESP(player)
+    if espHolders[player] or player == LocalPlayer then return end
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "TSB_ESP"
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.fromRGB(0, 255, 150)
+    label.TextStrokeTransparency = 0
+    label.TextSize = 13
+    label.Font = Enum.Font.SourceSansBold
+    label.Parent = billboard
+
+    espHolders[player] = { Billboard = billboard, Label = label }
+end
+
+local function removeESP(player)
+    if espHolders[player] then
+        if espHolders[player].Billboard then
+            espHolders[player].Billboard:Destroy()
+        end
+        espHolders[player] = nil
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    if not Settings.ESPEnabled then
+        for p, data in pairs(espHolders) do
+            removeESP(p)
+        end
+        return
+    end
+
+    local _, myHrp = getMyChar()
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            if isAlive(p) then
+                if not espHolders[p] then createESP(p) end
+
+                local data = espHolders[p]
+                local targetHrp = p.Character:FindFirstChild("HumanoidRootPart")
+                local targetHum = p.Character:FindFirstChildOfClass("Humanoid")
+
+                if targetHrp and targetHum and data then
+                    data.Billboard.Parent = p.Character
+                    local dist = myHrp and math.floor((myHrp.Position - targetHrp.Position).Magnitude) or 0
+                    local hp = math.floor((targetHum.Health / targetHum.MaxHealth) * 100)
+
+                    local streak = 0
+                    local leaderstats = p:FindFirstChild("leaderstats")
+                    if leaderstats and leaderstats:FindFirstChild("Streak") then
+                        streak = leaderstats.Streak.Value
+                    end
+
+                    data.Label.Text = string.format("%s\nHP: %d%% | Dist: %dm | Streak: %d", p.DisplayName, hp, dist, streak)
+
+                    if streak >= 5 then
+                        data.Label.TextColor3 = Color3.fromRGB(255, 50, 50)
+                    else
+                        data.Label.TextColor3 = Color3.fromRGB(0, 255, 150)
                     end
                 end
+            else
+                removeESP(p)
             end
         end
     end
 end)
 
-local function resetHitboxes()
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p.Character then
-            local targetHrp = p.Character:FindFirstChild("HumanoidRootPart")
-            if targetHrp then
-                targetHrp.Size = Vector3.new(2, 2, 1)
-                targetHrp.Transparency = 1
-            end
-        end
-    end
-end
+Players.PlayerRemoving:Connect(removeESP)
 
 -- ==========================================
 -- TARGET SELECTION LOGIC
@@ -241,8 +377,10 @@ local Window = Rayfield:CreateWindow({
 })
 
 local FarmTab = Window:CreateTab("Auto Farm", 0)
-local DefenseTab = Window:CreateTab("Safety & Defense", 0)
 local CombatTab = Window:CreateTab("Combat", 0)
+local DefenseTab = Window:CreateTab("Defense", 0)
+local VisualsTab = Window:CreateTab("Visuals", 0)
+local ServerTab = Window:CreateTab("Server", 0)
 
 -- CREDITS SECTION
 FarmTab:CreateSection("Script Info")
@@ -280,43 +418,24 @@ FarmTab:CreateToggle({
    end,
 })
 
--- SAFETY & DEFENSE SECTION
-DefenseTab:CreateSection("Safe Zone / Low HP Escape")
-
-DefenseTab:CreateToggle({
-   Name = "Enable Escape to Safe Zone",
-   CurrentValue = Settings.AutoSafeZone,
-   Flag = "SafeZoneToggle",
-   Callback = function(Value)
-       Settings.AutoSafeZone = Value
-   end,
-})
-
-DefenseTab:CreateSlider({
-   Name = "Low HP Escape Threshold (%)",
-   Range = {10, 80},
-   Increment = 5,
-   Suffix = "%",
-   CurrentValue = Settings.LowHealthThreshold,
-   Flag = "LowHPSlider",
-   Callback = function(Value)
-       Settings.LowHealthThreshold = Value
-   end,
-})
-
-DefenseTab:CreateButton({
-   Name = "Manual Teleport to Safe Zone",
-   Callback = function()
-       local char, hrp = getMyChar()
-       if hrp then
-           getOrCreateSafePlatform()
-           hrp.CFrame = CFrame.new(Settings.SafePlatformPos + Vector3.new(0, 4, 0))
-       end
-   end,
-})
-
 -- COMBAT SECTION
-CombatTab:CreateSection("Auto-Block")
+CombatTab:CreateSection("Skills & Ultimate")
+
+CombatTab:CreateToggle({
+   Name = "Auto Awakening (G)",
+   CurrentValue = Settings.AutoAwakening,
+   Flag = "AutoAwakeToggle",
+   Callback = function(Value) Settings.AutoAwakening = Value end,
+})
+
+CombatTab:CreateToggle({
+   Name = "Smart Combo Execution",
+   CurrentValue = Settings.SmartCombo,
+   Flag = "SmartComboToggle",
+   Callback = function(Value) Settings.SmartCombo = Value end,
+})
+
+CombatTab:CreateSection("Defense & Movement")
 
 CombatTab:CreateToggle({
    Name = "Enable Auto-Block",
@@ -335,35 +454,77 @@ CombatTab:CreateSlider({
    Suffix = "studs",
    CurrentValue = Settings.AutoBlockRange,
    Flag = "AutoBlockRangeSlider",
-   Callback = function(Value)
-       Settings.AutoBlockRange = Value
-   end,
+   Callback = function(Value) Settings.AutoBlockRange = Value end,
 })
 
-CombatTab:CreateSection("Hitbox Expander (Reach)")
+CombatTab:CreateToggle({
+   Name = "Anti-Fling",
+   CurrentValue = Settings.AntiFling,
+   Flag = "AntiFlingToggle",
+   Callback = function(Value) Settings.AntiFling = Value end,
+})
 
 CombatTab:CreateToggle({
-   Name = "Enable Hitbox Expander",
-   CurrentValue = Settings.HitboxExpanded,
-   Flag = "HitboxToggle",
-   Callback = function(Value)
-       Settings.HitboxExpanded = Value
-       if not Value then
-           resetHitboxes()
+   Name = "Fast Get-Up (Ragdoll Recovery)",
+   CurrentValue = Settings.FastRecovery,
+   Flag = "FastRecoveryToggle",
+   Callback = function(Value) Settings.FastRecovery = Value end,
+})
+
+-- DEFENSE TAB
+DefenseTab:CreateSection("Safe Zone / Low HP Escape")
+
+DefenseTab:CreateToggle({
+   Name = "Enable Escape to Safe Zone",
+   CurrentValue = Settings.AutoSafeZone,
+   Flag = "SafeZoneToggle",
+   Callback = function(Value) Settings.AutoSafeZone = Value end,
+})
+
+DefenseTab:CreateSlider({
+   Name = "Low HP Escape Threshold (%)",
+   Range = {10, 80},
+   Increment = 5,
+   Suffix = "%",
+   CurrentValue = Settings.LowHealthThreshold,
+   Flag = "LowHPSlider",
+   Callback = function(Value) Settings.LowHealthThreshold = Value end,
+})
+
+DefenseTab:CreateButton({
+   Name = "Manual Teleport to Safe Zone",
+   Callback = function()
+       local char, hrp = getMyChar()
+       if hrp then
+           getOrCreateSafePlatform()
+           hrp.CFrame = CFrame.new(Settings.SafePlatformPos + Vector3.new(0, 4, 0))
        end
    end,
 })
 
-CombatTab:CreateSlider({
-   Name = "Hitbox Radius (Studs)",
-   Range = {2, 50},
-   Increment = 1,
-   Suffix = "studs",
-   CurrentValue = Settings.HitboxSize,
-   Flag = "HitboxSizeSlider",
-   Callback = function(Value)
-       Settings.HitboxSize = Value
-   end,
+-- VISUALS TAB
+VisualsTab:CreateSection("ESP Visuals")
+
+VisualsTab:CreateToggle({
+   Name = "Enable Player ESP",
+   CurrentValue = Settings.ESPEnabled,
+   Flag = "ESPToggle",
+   Callback = function(Value) Settings.ESPEnabled = Value end,
+})
+
+-- SERVER TAB
+ServerTab:CreateSection("Server Management")
+
+ServerTab:CreateToggle({
+   Name = "Anti-AFK Protection",
+   CurrentValue = Settings.AntiAFK,
+   Flag = "AntiAFKToggle",
+   Callback = function(Value) Settings.AntiAFK = Value end,
+})
+
+ServerTab:CreateButton({
+   Name = "Server Hop Now",
+   Callback = function() serverHop() end,
 })
 
 Rayfield:LoadConfiguration()
@@ -372,6 +533,8 @@ Rayfield:LoadConfiguration()
 -- MAIN BOT LOOP (TWEEN, FARM & SAFE ESCAPE)
 -- ==========================================
 task.spawn(function()
+    local comboStep = 1
+
     while true do
         task.wait(Settings.CheckInterval)
 
@@ -385,15 +548,13 @@ task.spawn(function()
                 if not isInSafeZone then
                     isInSafeZone = true
                     getOrCreateSafePlatform()
-                    -- Телепортируем персонажа на безопасную пластину в небе
                     hrp.CFrame = CFrame.new(Settings.SafePlatformPos + Vector3.new(0, 4, 0))
                 end
             elseif isInSafeZone and hpPercent >= (Settings.LowHealthThreshold + 20) then
-                -- Восстановили здоровье — возвращаемся в бой
                 isInSafeZone = false
             end
 
-            -- ОСНОВНОЙ АВТО-ФАРМ (работает только если НЕ на безопасной платформе)
+            -- ОСНОВНОЙ АВТО-ФАРМ
             if Settings.AutoFarm and not isInSafeZone then
                 if not currentTarget or not isAlive(currentTarget) then
                     currentTarget = getNextTarget()
@@ -413,23 +574,32 @@ task.spawn(function()
                             hrp.CFrame = CFrame.new(myPos, Vector3.new(targetPos.X, myPos.Y, targetPos.Z))
 
                             if not isBlocking then
-                                if tick() - lastM1Time >= 0.25 then
-                                    clickM1()
-                                    lastM1Time = tick()
-                                end
+                                if Settings.SmartCombo then
+                                    -- Умное комбинирование M1 и скиллов
+                                    if tick() - lastM1Time >= 0.22 then
+                                        clickM1()
+                                        lastM1Time = tick()
+                                        comboStep = comboStep + 1
+                                    end
 
-                                if tick() - lastSkillTime >= 1.0 then
-                                    pressKeyAsync(Enum.KeyCode.One)
-                                    pressKeyAsync(Enum.KeyCode.Two)
-                                    pressKeyAsync(Enum.KeyCode.Three)
-                                    pressKeyAsync(Enum.KeyCode.Four)
-                                    lastSkillTime = tick()
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-end)
+                                    if comboStep >= 4 and tick() - lastSkillTime >= 0.8 then
+                                        pressKeyAsync(Enum.KeyCode.One)
+                                        pressKeyAsync(Enum.KeyCode.Two)
+                                        pressKeyAsync(Enum.KeyCode.Three)
+                                        pressKeyAsync(Enum.KeyCode.Four)
+                                        lastSkillTime = tick()
+                                        comboStep = 1
+                                    end
+                                else
+                                    -- Обычный спам
+                                    if tick() - lastM1Time >= 0.25 then
+                                        clickM1()
+                                        lastM1Time = tick()
+                                    end
+
+                                    if tick() - lastSkillTime >= 1.0 then
+                                        pressKeyAsync(Enum.KeyCode.One)
+                                        pressKeyAsync(Enum.KeyCode.Two)
+                                        pressKeyAsync(Enum.KeyCode.Three)
+                                        pressKeyAsync(Enum.KeyCode.Four)
+                 
